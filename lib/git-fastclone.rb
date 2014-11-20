@@ -9,11 +9,11 @@ class GitFastClone
     @prefetch_submodules = true
 
     # Thread-level locking for reference repos
-    # TODO: Add flock-based locking if we want to do more than one build on a given slave
+    # TODO: Add flock-based locking if we want to avoid conflicting with ourselves.
     @reference_mutex = Hash.new { |hash, key| hash[key] = Mutex.new() }
 
     # Only update each reference repo once per run.
-    # TODO: May want to update this if we're doing more than one build on a given slave.
+    # TODO: May want to update this so we don't duplicate work with other copies of ourself
     #       Perhaps a last-updated-time and a timeout per reference repo.
     @reference_updated = Hash.new { |hash, key| hash[key] = false }
   end
@@ -30,7 +30,6 @@ class GitFastClone
       opts.on("-b", "--branch BRANCH", "Checkout this branch rather than the default") do |branch|
         @options[:branch] = branch
       end
-      # TODO: add --verbose option that turns on and off printing of sub-commands
       # TODO: Add help text.
     end.parse!
 
