@@ -26,26 +26,26 @@ class GitFastClone
     # One option --branch=<branch>  We're not as brittle as clone. That branch can be a sha or tag and we're still okay.
     @options = {}
     OptionParser.new do |opts|
+      opts.banner = "Usage: git fastclone [options] <git-url> [path]"
       @options[:branch] = nil
       opts.on("-b", "--branch BRANCH", "Checkout this branch rather than the default") do |branch|
         @options[:branch] = branch
       end
-      # TODO: Add help text.
     end.parse!
-
-    puts ARGV
 
     # Remaining two positional args are url and optional path
     url = ARGV[0]
     path = ARGV[1] || path_from_git_url(url)
 
+    puts "Cloning #{url} to #{path}"
+
     # Do a checkout with reference repositories for main and submodules
-    clone(url, @options[:branch], File.join(Dir.pwd, path))
+    clone(url, @options[:branch], path)
   end
 
   def path_from_git_url(url)
     # Get the checkout path from tail-end of the url.
-    File.join(Dir.pwd, url.match(/([^\/]*)\.git$/)[1])
+    url.match(/([^\/]*)\.git$/)[1]
   end
 
   # Checkout to SOURCE_DIR. Update all submodules recursively. Use reference repos everywhere for speed.
@@ -53,12 +53,12 @@ class GitFastClone
     initial_time = Time.now()
 
     with_git_mirror(url) do |mirror|
-      fail_on_error("git", "clone", "--reference", mirror, url, src_dir)
+      fail_on_error("git", "clone", "--quiet", "--reference", mirror, url, src_dir)
     end
 
     # Only checkout if we're changing branches to a non-default branch
     unless rev.nil? then
-      fail_on_error("git", "checkout", rev, :chdir=>src_dir)
+      fail_on_error("git", "checkout", "--quiet", rev, :chdir=>src_dir)
     end
 
     update_submodules(src_dir, url)
@@ -82,7 +82,7 @@ class GitFastClone
       # Parse its output directly to save time.
       fail_on_error("git", "submodule", "init", :chdir=>pwd).split("\n").each do |line|
         # Submodule path (not name) is in between single quotes '' at the end of the line
-        submodule_path = File.join(pwd, line.strip.match(/'([^']*)'$/)[1])
+        submodule_path = line.strip.match(/'([^']*)'$/)[1]
         # URL is in between parentheses ()
         submodule_url = line.strip.match(/\(([^)]*)\)/)[1]
         submodule_url_list << submodule_url
@@ -90,10 +90,10 @@ class GitFastClone
         # Each update happens on a separate thread for speed.
         threads << Thread.new do
           with_git_mirror(submodule_url) do |mirror|
-            fail_on_error("git", "submodule", "update", "--reference", mirror, submodule_path, :chdir=>pwd)
+            fail_on_error("git", "submodule", "update", "--quiet", "--reference", mirror, submodule_path, :chdir=>pwd)
           end
           # Recurse into the submodule directory
-          update_submodules(submodule_path, submodule_url)
+          update_submodules(File.join(pwd,submodule_path), submodule_url)
         end
       end
       update_submodule_reference(url, submodule_url_list)
@@ -174,7 +174,11 @@ class GitFastClone
   def with_git_mirror(url)
     update_reference_repo(url)
 
-    # May want to lock the reference repo for this, but don't need to for how we use this.
-    yield reference_repo_dir(url)
+    # Sometimes remote updates involve re-packing objects on a different thread
+    # We grab the reference repo lock here just to make sure whatever thread
+    # ended up doing the update is done with its housekeeping.
+    with_reference_repo_lock(url) do
+      yield reference_repo_dir(url)
+    end
   end
 end
